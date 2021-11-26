@@ -1,0 +1,223 @@
+---
+title: "Rcodes"
+author: "Doven"
+date: "`r Sys.time()`"
+output:
+site: bookdown::bookdown_site
+  bookdown::gitbook: default
+---
+
+# R notes in time series
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("forecast")
+install.packages("aTSA")
+install.packages("tseries")
+install.packages("fpp2")
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("egg")
+install.packages("lattice")
+```
+
+```{r}
+library(forecast)
+library(aTSA)
+library(tseries)
+library(fpp2)
+library(ggplot2)
+library(dplyr)
+library(GGally)
+library(lattice)
+library(egg)
+```
+
+```{r}
+data("uschange")
+```
+
+
+Percentage changes in personal consumption expenditure and personal income or the US
+```{r}
+autoplot(uschange[,c("Consumption","Income")]) +
+  ylab("% Change") + xlab("Year")
+```
+
+```{r}
+uschange %>% 
+  as.data.frame() %>% 
+  ggplot(aes(x = Income, y = Consumption)) +
+  ylab("Consumption (quarterly % change)") +
+  xlab("income (quarterly change)") +
+  geom_point() +
+  geom_smooth(method = "lm", se= FALSE)
+```
+## explaination
+The dashed line is simply a line with slope 1 and intercept 0. In other words,  if the two things you're comparing have a correlation coefficient of 1, the dots will cluster along that line. The blue line is a regression along the actual points that you have, so you can see how your actual correlation deviates from 1.
+
+
+## fit a linear model with time series components
+```{r}
+tslm(Consumption ~ Income, data = uschange)
+```
+
+```{r}
+uschange %>% 
+  as.data.frame() %>% 
+  GGally::ggpairs()
+```
+
+```{r}
+fit.consMR <- tslm(
+  Consumption ~ Income + Production + Unemployment + Savings, 
+  data = uschange)
+summary(fit.consMR)
+```
+
+```{r}
+autoplot(uschange[, 'Consumption'], series = "Data") +
+  autolayer(fitted(fit.consMR), series = "Fitted") +
+  xlab("Year") + ylab("") +
+  ggtitle("Percent change in US consumption expenditure") +
+  guides(colour = guide_legend(title = " "))
+```
+
+```{r}
+cbind(Data = uschange[,"Consumption"], 
+      Fitted = fitted(fit.consMR)) %>% 
+  as.data.frame() %>% 
+  ggplot(aes(x = Data, y = Fitted)) +
+  geom_point() +
+  ylab("Fitted (predicted values)") +
+  ggtitle("Percent change in US consumption expenditure") +
+  geom_abline(intercept = 0, slope = 1)
+```
+
+```{r}
+checkresiduals(fit.consMR)
+```
+## Explaination
+the time plot shows changing variation over time, but is otherwise relatively unremarkable. this heteroscedasticity will potencially make the prediction interval coverage inaccurate. the histogram shows the residuals seem to be slightly skewed, which may also affect the coverage probability of the prediction intervals. the autocorrelation plot shows significant spike at lag 7, but it is not quite enough for Breusch-Godfrey to be significant at the 5% level. the autocorrelation is not particularly large, and at lag 7 it is unlikely to have any noticeable impact on the forecast or the prediction intervals.
+
+
+```{r}
+df <- as.data.frame(uschange)
+df[, "Residuals"] <- as.numeric(residuals(fit.consMR))
+p1 <- ggplot(df, aes(x = Income, y = Residuals)) + 
+  geom_point()
+p2 <- ggplot(df, aes(x = Production, y = Residuals)) +
+  geom_point()
+p3 <- ggplot(df, aes(x = Savings, y = Residuals)) +
+  geom_point()
+p4 <- ggplot(df, aes(x = Unemployment, y = Residuals)) +
+  geom_point()
+gridExtra::grid.arrange(p1,p2,p3,p4, nrow=2)
+```
+## Explaination
+plot of residuals against the fitted values should show no pattern. if a pattern is observed, there may be "heteroscedasticity" in the errors which means that the variance may not be constant.
+
+```{r}
+cbind(Fitted = fitted(fit.consMR), 
+      Residuals = residuals(fit.consMR)) %>% 
+  as.data.frame() %>% 
+  ggplot(aes(x = Fitted, y = Residuals)) + geom_point()
+```
+
+## Spurious Regression
+```{r}
+aussies <- window(ausair, end =2011)
+fit <- tslm(aussies ~ guinearice)
+summary(fit)
+checkresiduals(fit)
+```
+
+```{r}
+beer2 <- window(ausbeer, start = 1992)
+autoplot(beer2) +xlab("Year") + ylab("Megalitres")
+```
+
+## when we want to forecast future beer production
+```{r}
+fit.beer <- tslm(beer2 ~ trend + season)
+summary(fit.beer)
+```
+## Explaination
+there is an average downward trend of -0.34 megalitres per quarter. On average,the second quarter has the production of 34.7 megalitres lower than the first quarter, the third quarter has production of 17.8 megalitres lower than the first quarter and so on.
+
+```{r}
+autoplot(beer2, series = "Data") +
+  autolayer(fitted(fit.beer), series = "Fitted") +
+  xlab("Year") + ylab("Megalitres") +
+  ggtitle("Quarterly Beer Production")
+```
+
+```{r}
+cbind(Data = beer2, Fitted = fitted(fit.beer)) %>% 
+  as.data.frame() %>% 
+  ggplot(aes(x = Data, y = Fitted,
+             colour = as.factor(cycle(beer2)))) +
+  geom_point() +
+  ylab("Fitted") + xlab("Actual values") +
+  ggtitle("Quarterly beer production") +
+  scale_colour_brewer(palette= "Dark2", name = "Quarter") +
+  geom_abline(intercept = 0, slope = 1)
+```
+
+## Fourier terms
+```{r}
+fourier.beer <- tslm(beer2 ~ trend + fourier(beer2, K = 2))
+summary(fourier.beer)
+```
+
+```{r}
+CV(fit.consMR)
+```
+## Explaination
+For CV, AIC, AICc and BIC measures, we want to find the model with the lowest value; for the adjusted R^2, we seek the model with the highest value.
+
+```{r}
+beer2 <- window(ausbeer, start = 1992)
+fit.beer <- tslm(beer2 ~ trend + season)
+fcast <- forecast(fit.beer)
+autoplot(fcast) +
+  ggtitle("Forecast of beer production using regression") +
+  xlab("Year") + ylab("megalitres")
+```
+
+## Scenario based forecasting
+```{r}
+fit.consBest <- tslm(
+  Consumption ~ Income + Savings + Unemployment,
+  data = uschange)
+```
+
+```{r}
+h <- 4
+newdata <- data.frame(
+  Income = c(1, 1, 1, 1),
+  Savings = c(0.5, 0.5, 0.5, 0.5),
+  Unemployment = c(0,0,0,0))
+fcast.up <- forecast(fit.consBest, newdata = newdata)
+newdata <- data.frame(
+  Income = rep(-1, h),
+  Savings = rep(-0.5, h),
+  Unemployment = rep(0, h))
+fcast.down <- forecast(fit.consBest, newdata = newdata)
+```
+
+```{r}
+autoplot(uschange[, 1]) +
+  ylab("% change in US cosumption") +
+  autolayer(fcast.up, PI = TRUE, series = "increase") +
+  autolayer(fcast.down, PI = TRUE, series = "decrease") +
+  guides(colour = guide_legend(title = "Scenario"))
+```
+
+
+
+
+
+
